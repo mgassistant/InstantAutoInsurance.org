@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { badEmailFlag, clientIP, verifyEmail } from "@/lib/emailVerification";
 
 const BROKERIQ_URL =
   process.env.BROKERIQ_URL || "https://www.broker-iq.com/api/leads/inbound";
@@ -89,6 +90,12 @@ export async function POST(req: NextRequest) {
 
   const leadStatus = isPartial ? "partial" : "complete";
 
+  // Verify the email server-side (the form checks in the browser too, but a
+  // partial capture or a direct POST skips that). Soft-flag only: a bad
+  // address is tagged on the lead for review, never dropped. Fails open.
+  const emailCheck = await verifyEmail(email, clientIP(req));
+  const emailFlag = badEmailFlag(emailCheck);
+
   // 1) BrokerIQ (fail-open). BrokerIQ dedups by email/phone, so a later
   //    complete submission updates the same partial record.
   const brokerPromise = fetch(BROKERIQ_URL, {
@@ -121,6 +128,8 @@ export async function POST(req: NextRequest) {
         vehicle,
         sr22,
         state,
+        email_verification: emailCheck,
+        ...(emailFlag ? { suspected_spam: true, spam_flags: [emailFlag] } : {}),
       },
     }),
   })
